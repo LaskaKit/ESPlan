@@ -2,11 +2,6 @@
 ## LaskaKit Useful stuff
 #################
 
-#############
-## LaskaKit folders
-#############
-input/
-
 ## AVR Development
 *.eep
 *.elf
@@ -20,9 +15,6 @@ input/
 
 ## Notepad++ backup files
 *.bak
-
-## BOM files
-*bom*
 
 #############
 ## Eagle
@@ -49,6 +41,7 @@ input/
 *.suo
 *.user
 *.sln.docstates
+*.docx
 
 # Build results
 [Dd]ebug/
