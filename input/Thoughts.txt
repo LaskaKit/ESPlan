@@ -1,0 +1,9 @@
+* LAN8720
+* kompatabilní s LilyGo https://www.laskakit.cz/lilygo-ttgo-t-internet-poe-esp32-wroom-lan8720a-vyvojova-deska/
+* SD karta
+* Poe: možna přídavné, nejlíp pasivně 6-60V
+* RS485
+* vice pinu, 12-16, expander?
+* RTC?
+* Bluetooth proxy?
+* UFl connector
