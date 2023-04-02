@@ -1,4 +1,4 @@
-![ESPlan pinout](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan%20(1).jpg)
+![ESPlan](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan%20(1).jpg)
 
 # ESPlan
 ESP32 má Wi-Fi a Bluetooth rozhraní přímo v sobě, ale někdy je potřeba jej rozšířit o ethernet nebo RS485. Proto jsme vytvořili [ESPlan](https://www.laskakit.cz/laskakit-esplan-esp32-lan8720a-max485-poe/), ten má všechny čtyři vyjmenované periférie na jedné jediné desce - je potřeba komunikovat skrze Wi-Fi? Není problém. Bluetooth? I ten můžeš použít. RS485 pro připojení čidel, která jsou desítky metrů daleko? Samozřejmě! A data odesílat přes ethernet? Jasně! A navíc můžeš desku napájet skrze PoE.
