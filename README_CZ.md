@@ -20,3 +20,7 @@ Na desce, kromě RJ45, RS485 a USB-C, najdeš i náš uŠup konektor pro připoj
 ESPlan koupíš na https://www.laskakit.cz/laskakit-esplan-esp32-lan8720a-max485-poe/
 
 ![ESPlan pinout](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan_pinout.JPG)
+
+![ESPlan](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan%20(2).jpg)
+![ESPlan](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan%20(4).jpg)
+![ESPlan](https://github.com/LaskaKit/ESPlan/blob/main/img/ESPlan%20(5).jpg)
