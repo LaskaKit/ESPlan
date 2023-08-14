@@ -1,0 +1,51 @@
+esphome:
+  name: esplan
+  friendly_name: ESPlan
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "ADD_YOUR_KEY"
+
+ota:
+
+# Sensor example
+i2c:
+  sda: 33
+  scl: 32
+  id: bus_a
+
+sensor:
+  - platform: sht4x
+    i2c_id: bus_a
+    address: 0x44
+    temperature:
+      name: "Temperature"
+      id: temp
+
+    humidity:
+      name: "Humidity"    
+      id: humidity
+
+# Configuration
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO17_OUT
+  phy_addr: 0
+
+#   # Optional manual IP
+#   manual_ip:
+#     static_ip: 192.168.1.123
+#     gateway: 192.168.1.1
+#     subnet: 255.255.255.0
+    
