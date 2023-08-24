@@ -8,7 +8,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiClient.h>
+#include <ETH.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <SPI.h>
@@ -26,6 +26,54 @@ const char *host = "esplan";
 SPIClass spi = SPIClass(HSPI);
 
 WebServer server(80);
+
+// LAN8720A parameters
+#define ETH_POWER_PIN -1
+#define ETH_ADDR 0
+#define ETH_MDC_PIN 23
+#define ETH_MDIO_PIN 18
+#define ETH_NRST_PIN 5
+
+static bool eth_connected = false;
+
+void WiFiEvent(WiFiEvent_t event)
+{
+    switch (event)
+    {
+    case ARDUINO_EVENT_ETH_START:
+        Serial.println("ETH Started");
+        // set eth hostname here
+        ETH.setHostname("esplan");
+        break;
+    case ARDUINO_EVENT_ETH_CONNECTED:
+        Serial.println("ETH Connected");
+        break;
+    case ARDUINO_EVENT_ETH_GOT_IP:
+        Serial.print("ETH MAC: ");
+        Serial.print(ETH.macAddress());
+        Serial.print(", IPv4: ");
+        Serial.print(ETH.localIP());
+        if (ETH.fullDuplex())
+        {
+            Serial.print(", FULL_DUPLEX");
+        }
+        Serial.print(", ");
+        Serial.print(ETH.linkSpeed());
+        Serial.println("Mbps");
+        eth_connected = true;
+        break;
+    case ARDUINO_EVENT_ETH_DISCONNECTED:
+        Serial.println("ETH Disconnected");
+        eth_connected = false;
+        break;
+    case ARDUINO_EVENT_ETH_STOP:
+        Serial.println("ETH Stopped");
+        eth_connected = false;
+        break;
+    default:
+        break;
+    }
+}
 
 void handleNotFound()
 {
@@ -77,32 +125,16 @@ void handleRoot()
     spi.end();
 }
 
-void wifi_setup()
+void eth_setup()
 {
-    uint8_t i = 0;
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    // Wait for connection
-    while (WiFi.status() != WL_CONNECTED && i++ < 20)
-    {
-        Serial.print(".");
-        delay(500);
-    }
-    if (i == 21)
-    {
-        Serial.print("\n");
-        Serial.print("Could not connect to ");
-        Serial.println(ssid);
-        while (1)
-        {
-            delay(500);
-        }
-    }
-    Serial.print("\n");
-    Serial.print("Connected! IP address: ");
-    Serial.println(WiFi.localIP());
+    // For reseting LAN8720A
+    pinMode(ETH_NRST_PIN, OUTPUT);
+    digitalWrite(ETH_NRST_PIN, LOW);
+    delay(500);
+    digitalWrite(ETH_NRST_PIN, HIGH);
+
+    WiFi.onEvent(WiFiEvent);
+    ETH.begin(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_PHY_LAN8720, ETH_CLOCK_GPIO17_OUT);
 }
 
 void DNS_setup()
@@ -122,7 +154,7 @@ void setup(void)
     Serial.begin(115200);
     Serial.print("\n");
 
-    wifi_setup();
+    eth_setup();
     DNS_setup();
 
     server.on("/", handleRoot); // Main page
