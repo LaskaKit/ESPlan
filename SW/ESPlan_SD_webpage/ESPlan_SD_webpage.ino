@@ -14,8 +14,6 @@
 #include <SPI.h>
 #include <SD.h>
 
-const char *ssid = "WiFi_6";
-const char *password = "WiFiBurian6";
 const char *host = "esplan";
 
 // SD card defines
