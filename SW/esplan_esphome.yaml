@@ -42,6 +42,7 @@ ethernet:
   mdio_pin: GPIO18
   clk_mode: GPIO17_OUT
   phy_addr: 0
+  power_pin: GPIO5
 
 #   # Optional manual IP
 #   manual_ip:
