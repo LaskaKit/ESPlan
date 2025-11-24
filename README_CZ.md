@@ -9,7 +9,7 @@ Máme dvě verze ESPlan lišící se typem antény
 - s anténou na DPS
 - s konektorem pro anténu (výhoda je připojení na delší vzdálenost)
 
-Jako LAN kontrolét jsme použili osvědčený LAN8720A. Tento kontrolér je totiž podporován v HomeAssistant a stejně tak v ESPhome. To znamená, že tuto desku si můžeš připojit přímo do tvé chytré domácnosti nebo dílny. 
+Jako LAN kontrolér jsme použili osvědčený LAN8720A. Tento kontrolér je totiž podporován v HomeAssistant a stejně tak v ESPhome. To znamená, že tuto desku si můžeš připojit přímo do tvé chytré domácnosti nebo dílny. 
 
 Konektor USB-C, který je na desce zajištuje jak napájení (pokud nepoužíváš [PoE modul](https://www.laskakit.cz/sdapo-dp1435-poe-modul-ieee-802-3af-5v-2-4a/)), tak i programování. Programátor je totiž na desce - žádné zbytečné mačkání tlačítek, aby ses dostal do bootloader režimu a mohl programovat - tohle se totiž dělá "samo". 
 
