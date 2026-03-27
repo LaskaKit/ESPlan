@@ -1,20 +1,27 @@
-/*
-  ESP32 + LAN8720 + WebServer + SD + RS485 + SHT40 + BMP280 + NeoPixel
+/* Test for LaskaKit ESPlan V2 ESP32 LAN8720A RS485 PoE
+ * ESP32 + LAN8720 + WebServer + SD + RS485 + SHT40 + BMP280 + NeoPixel
+ *
+ * Funkce:
+ *  - web rozhrani pres Ethernet
+ *  - stav ETH, SD, SHT40, BMP280, RS485
+ *  - ovladani NeoPixel LED
+ *  - odesilani textu pres RS485
+ *  - prijem dat z RS485
+ *  - prochazeni adresaru na SD
+ *  - upload / stahnout / smazat souboru na SD
+ *  - vytvareni a mazani adresaru na SD
+ *  - automaticka reakce na vyndani / vlozeni SD karty
+ *  - po vlozeni se SD karta ihned znovu nacte
+ *  - SD panel se na webu obnovi jen pri zmene stavu SD karty
+ *  - periodicky debug do seriove konzole
+ *  - volba jazyka CZ / ENG
 
-  Funkce:
-  - web rozhrani pres Ethernet
-  - stav ETH, SD, SHT40, BMP280, RS485
-  - ovladani NeoPixel LED
-  - odesilani textu pres RS485
-  - prijem dat z RS485
-  - prochazeni adresaru na SD
-  - upload / stahnout / smazat souboru na SD
-  - vytvareni a mazani adresaru na SD
-  - automaticka reakce na vyndani / vlozeni SD karty
-  - po vlozeni se SD karta ihned znovu nacte
-  - SD panel se na webu obnovi jen pri zmene stavu SD karty
-  - periodicky debug do seriove konzole
-*/
+ * Board:   kaKit ESPlan V2   https://www.laskakit.cz/laskakit-esplan-esp32-lan8720a-max485-poe/
+ *
+ * 
+ * Email:podpora@laskakit.cz
+ * Web:laskakit.cz
+ */
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -23,6 +30,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
+#include <vector>
 #include <Adafruit_NeoPixel.h>
 #include <Adafruit_SHT4x.h>
 #include <Adafruit_BMP280.h>
@@ -44,7 +52,6 @@
 // ---------- RS485 ----------
 #define RS485_TX_PIN   4
 #define RS485_RX_PIN   36
-#define RS485_BAUDRATE 9600
 
 // ---------- I2C ----------
 #define I2C_SDA_PIN    33
@@ -65,6 +72,87 @@
 // ---------- NeoPixel ----------
 #define NEOPIXEL_PIN   0
 #define NEOPIXEL_COUNT 1
+
+// =====================================================
+// JAZYK UI
+// =====================================================
+
+enum UiLang {
+  LANG_CZ,
+  LANG_EN
+};
+
+UiLang currentUiLang = LANG_CZ;
+
+// =====================================================
+// STRUKTUROVANÝ LOG
+// =====================================================
+
+struct LogEntry {
+  uint8_t type;
+  String a;
+  String b;
+  String c;
+};
+
+enum LogType : uint8_t {
+  LOG_TEXT = 0,
+  LOG_SHT40_READ_FAILED,
+  LOG_SHT40_NOT_FOUND,
+  LOG_SHT40_DETECTED,
+  LOG_BMP280_READ_FAILED,
+  LOG_BMP280_DETECTED_76,
+  LOG_BMP280_DETECTED_77,
+  LOG_BMP280_NOT_FOUND,
+  LOG_I2C_INIT,
+  LOG_SD_NOT_INSERTED,
+  LOG_SD_INIT,
+  LOG_SD_BEGIN_FAILED,
+  LOG_SD_NOT_FOUND,
+  LOG_SD_OK,
+  LOG_SD_SIZE_MB,
+  LOG_SD_REMOVED,
+  LOG_SD_INSERTED,
+  LOG_RS485_INIT,
+  LOG_RS485_PINS,
+  LOG_ETH_STATUS_TITLE,
+  LOG_ETH_STATUS_LINK,
+  LOG_ETH_STATUS_IP,
+  LOG_ETH_STATUS_MAC,
+  LOG_ETH_START,
+  LOG_ETH_CONNECTED,
+  LOG_ETH_GOT_IP,
+  LOG_ETH_DISCONNECTED,
+  LOG_ETH_STOP,
+  LOG_ETH_INIT,
+  LOG_ETH_BEGIN_FAILED,
+  LOG_ETH_OK,
+  LOG_ETH_NO_IP,
+  LOG_LED_SET,
+  LOG_RS485_TX,
+  LOG_SD_DELETE_OK,
+  LOG_SD_DELETE_ERROR,
+  LOG_MKDIR_INVALID,
+  LOG_MKDIR_EXISTS,
+  LOG_MKDIR_OK,
+  LOG_MKDIR_ERROR,
+  LOG_UPLOAD_INVALID_NAME,
+  LOG_UPLOAD_START,
+  LOG_UPLOAD_OPEN_WRITE_FAILED,
+  LOG_UPLOAD_FINISHED,
+  LOG_UPLOAD_ABORTED,
+  LOG_WEB_STARTED,
+  LOG_START,
+  LOG_READY,
+  LOG_OPEN_BROWSER,
+  LOG_ETH_NO_IP_YET,
+  LOG_RS485_RX,
+  LOG_HEAP_TOTAL,
+  LOG_HEAP_FREE,
+  LOG_CPU_FREQ
+};
+
+std::vector<LogEntry> eventLog;
 
 // =====================================================
 // GLOBÁLNÍ OBJEKTY
@@ -90,12 +178,13 @@ float lastPressure_hPa = NAN;
 
 uint8_t ledR = 0;
 uint8_t ledG = 0;
-uint8_t ledB = 10;
+uint8_t ledB = 0;
+uint8_t ledBrightness = 50; // 0-255
 
 String rs485LastSent = "";
 String rs485LastReceived = "";
 uint32_t rs485RxVersion = 0;
-String eventLog = "";
+uint32_t rs485Baudrate = 9600;
 
 File uploadFile;
 
@@ -112,6 +201,232 @@ uint32_t sdStateVersion = 0;
 
 // Heap baseline = total RAM chip heap
 uint32_t totalHeapBytes = 0;
+
+// =====================================================
+// JAZYK HELPERY
+// =====================================================
+
+UiLang parseLang(const String& s) {
+  String v = s;
+  v.toLowerCase();
+  return (v == "en") ? LANG_EN : LANG_CZ;
+}
+
+String langCode(UiLang lang) {
+  return (lang == LANG_EN) ? "en" : "cz";
+}
+
+UiLang getCurrentLang() {
+  return parseLang(server.arg("lang"));
+}
+
+void updateCurrentLangFromRequest() {
+  if (server.hasArg("lang")) {
+    currentUiLang = getCurrentLang();
+  }
+}
+
+String tr(UiLang lang, const String& cz, const String& en) {
+  return (lang == LANG_EN) ? en : cz;
+}
+
+String trCurrent(const String& cz, const String& en) {
+  return tr(currentUiLang, cz, en);
+}
+
+// =====================================================
+// LOG
+// =====================================================
+
+String renderLogEntry(const LogEntry& e, UiLang lang) {
+  switch (e.type) {
+    case LOG_TEXT:
+      return e.a;
+
+    case LOG_SHT40_READ_FAILED:
+      return tr(lang, "CHYBA: čtení SHT40 selhalo", "ERROR: SHT40 read failed");
+
+    case LOG_SHT40_NOT_FOUND:
+      return tr(lang, "SHT40 nebyl nalezen", "SHT40 not found");
+
+    case LOG_SHT40_DETECTED:
+      return tr(lang, "SHT40 detekován OK", "SHT40 detected OK");
+
+    case LOG_BMP280_READ_FAILED:
+      return tr(lang, "CHYBA: čtení BMP280 selhalo", "ERROR: BMP280 read failed");
+
+    case LOG_BMP280_DETECTED_76:
+      return tr(lang, "BMP280 detekován na adrese 0x76", "BMP280 detected at address 0x76");
+
+    case LOG_BMP280_DETECTED_77:
+      return tr(lang, "BMP280 detekován na adrese 0x77", "BMP280 detected at address 0x77");
+
+    case LOG_BMP280_NOT_FOUND:
+      return tr(lang, "BMP280 nebyl nalezen", "BMP280 not found");
+
+    case LOG_I2C_INIT:
+      return tr(lang, "Inicializace I2C...", "Initializing I2C...");
+
+    case LOG_SD_NOT_INSERTED:
+      return tr(lang, "SD karta není vložena", "SD card is not inserted");
+
+    case LOG_SD_INIT:
+      return tr(lang, "Inicializace SD karty...", "Initializing SD card...");
+
+    case LOG_SD_BEGIN_FAILED:
+      return tr(lang, "CHYBA: SD.begin() selhalo", "ERROR: SD.begin() failed");
+
+    case LOG_SD_NOT_FOUND:
+      return tr(lang, "CHYBA: SD karta nenalezena", "ERROR: SD card not found");
+
+    case LOG_SD_OK:
+      return tr(lang, "SD karta OK", "SD card OK");
+
+    case LOG_SD_SIZE_MB:
+      return tr(lang, "Velikost karty: ", "Card size: ") + e.a + " MB";
+
+    case LOG_SD_REMOVED:
+      return tr(lang, "SD karta byla vyjmuta", "SD card was removed");
+
+    case LOG_SD_INSERTED:
+      return tr(lang, "SD karta byla vložena", "SD card was inserted");
+
+    case LOG_RS485_INIT:
+      return tr(lang, "RS485 inicializováno", "RS485 initialized");
+
+    case LOG_RS485_PINS:
+      return "TX=" + e.a + ", RX=" + e.b + ", baud=" + e.c;
+
+    case LOG_ETH_STATUS_TITLE:
+      return tr(lang, "Ethernet stav:", "Ethernet status:");
+
+    case LOG_ETH_STATUS_LINK:
+      return "  " + tr(lang, "Link: ", "Link: ") + e.a;
+
+    case LOG_ETH_STATUS_IP:
+      return "  IP: " + e.a;
+
+    case LOG_ETH_STATUS_MAC:
+      return "  MAC: " + e.a;
+
+    case LOG_ETH_START:
+      return "[ETH] " + tr(lang, "START", "START");
+
+    case LOG_ETH_CONNECTED:
+      return "[ETH] " + tr(lang, "PŘIPOJENO", "CONNECTED");
+
+    case LOG_ETH_GOT_IP:
+      return "[ETH] " + tr(lang, "ZÍSKÁNA IP: ", "GOT IP: ") + e.a;
+
+    case LOG_ETH_DISCONNECTED:
+      return "[ETH] " + tr(lang, "ODPOJENO", "DISCONNECTED");
+
+    case LOG_ETH_STOP:
+      return "[ETH] " + tr(lang, "STOP", "STOP");
+
+    case LOG_ETH_INIT:
+      return tr(lang, "Inicializace Ethernetu...", "Initializing Ethernet...");
+
+    case LOG_ETH_BEGIN_FAILED:
+      return tr(lang, "CHYBA: ETH.begin() selhalo", "ERROR: ETH.begin() failed");
+
+    case LOG_ETH_OK:
+      return tr(lang, "Ethernet OK", "Ethernet OK");
+
+    case LOG_ETH_NO_IP:
+      return tr(lang, "Ethernet bez IP adresy", "Ethernet without IP address");
+
+    case LOG_LED_SET:
+      return tr(lang, "LED nastavena: ", "LED set: ") + "R=" + e.a + " G=" + e.b + " B=" + e.c;
+
+    case LOG_RS485_TX:
+      return "RS485 TX: " + e.a;
+
+    case LOG_SD_DELETE_OK:
+      return tr(lang, "SD smazání OK: ", "SD delete OK: ") + e.a;
+
+    case LOG_SD_DELETE_ERROR:
+      return tr(lang, "SD smazání CHYBA: ", "SD delete ERROR: ") + e.a;
+
+    case LOG_MKDIR_INVALID:
+      return tr(lang, "MKDIR: neplatný název adresáře", "MKDIR: invalid directory name");
+
+    case LOG_MKDIR_EXISTS:
+      return tr(lang, "MKDIR: adresář již existuje: ", "MKDIR: directory already exists: ") + e.a;
+
+    case LOG_MKDIR_OK:
+      return "MKDIR OK: " + e.a;
+
+    case LOG_MKDIR_ERROR:
+      return tr(lang, "MKDIR CHYBA: ", "MKDIR ERROR: ") + e.a;
+
+    case LOG_UPLOAD_INVALID_NAME:
+      return tr(lang, "Upload: neplatné jméno souboru", "Upload: invalid file name");
+
+    case LOG_UPLOAD_START:
+      return tr(lang, "Upload start: ", "Upload start: ") + e.a;
+
+    case LOG_UPLOAD_OPEN_WRITE_FAILED:
+      return tr(lang, "Upload: nelze otevřít soubor pro zápis", "Upload: cannot open file for writing");
+
+    case LOG_UPLOAD_FINISHED:
+      return tr(lang, "Upload dokončen: ", "Upload finished: ") + e.a + " B";
+
+    case LOG_UPLOAD_ABORTED:
+      return tr(lang, "Upload přerušen", "Upload aborted");
+
+    case LOG_WEB_STARTED:
+      return tr(lang, "Web server spuštěn na portu 80", "Web server started on port 80");
+
+    case LOG_START:
+      return tr(lang, "START", "START");
+
+    case LOG_READY:
+      return tr(lang, "PŘIPRAVENO", "READY");
+
+    case LOG_OPEN_BROWSER:
+      return tr(lang, "Otevři v prohlížeči: http://", "Open in browser: http://") + e.a + "/";
+
+    case LOG_ETH_NO_IP_YET:
+      return tr(lang, "Ethernet zatím nemá IP adresu", "Ethernet does not have an IP address yet");
+
+    case LOG_RS485_RX:
+      return "RS485 RX: " + e.a;
+
+    case LOG_HEAP_TOTAL:
+      return tr(lang, "Heap celkem: ", "Heap total: ") + e.a + " B";
+
+    case LOG_HEAP_FREE:
+      return tr(lang, "Heap volný: ", "Heap free: ") + e.a + " B (" + e.b + " %)";
+
+    case LOG_CPU_FREQ:
+      return "CPU: " + e.a + " MHz";
+
+    default:
+      return e.a;
+  }
+}
+
+void pushLogEntry(uint8_t type, const String& a = "", const String& b = "", const String& c = "") {
+  LogEntry e{type, a, b, c};
+  eventLog.push_back(e);
+
+  const size_t maxEntries = 250;
+  if (eventLog.size() > maxEntries) {
+    eventLog.erase(eventLog.begin(), eventLog.begin() + (eventLog.size() - maxEntries));
+  }
+}
+
+void addLogEntry(uint8_t type, const String& a = "", const String& b = "", const String& c = "") {
+  LogEntry e{type, a, b, c};
+  Serial.println(renderLogEntry(e, currentUiLang));
+  pushLogEntry(type, a, b, c);
+}
+
+void addLogText(const String& msg) {
+  Serial.println(msg);
+  pushLogEntry(LOG_TEXT, msg);
+}
 
 // =====================================================
 // RESET REASON
@@ -134,18 +449,6 @@ void printResetReason() {
     case ESP_RST_BROWNOUT:  Serial.println("BROWNOUT"); break;
     case ESP_RST_SDIO:      Serial.println("SDIO"); break;
     default:                Serial.println((int)reason); break;
-  }
-}
-
-// =====================================================
-// LOG
-// =====================================================
-
-void addLog(const String& msg) {
-  Serial.println(msg);
-  eventLog += msg + "\n";
-  if (eventLog.length() > 8000) {
-    eventLog.remove(0, eventLog.length() - 8000);
   }
 }
 
@@ -196,7 +499,6 @@ String jsonEscape(const String& s) {
   }
   return out;
 }
-
 
 String urlEncode(const String& s) {
   String out;
@@ -352,17 +654,21 @@ void setPixelColor(uint8_t r, uint8_t g, uint8_t b) {
   ledG = g;
   ledB = b;
 
+  pixel.setBrightness(ledBrightness);
   pixel.setPixelColor(0, pixel.Color(r, g, b));
   pixel.show();
 }
 
-void redirectHome() {
-  server.sendHeader("Location", "/");
+void redirectHome(UiLang lang) {
+  server.sendHeader("Location", "/?lang=" + langCode(lang));
   server.send(303);
 }
 
-void redirectToPath(const String& path) {
-  server.sendHeader("Location", "/?path=" + urlEncode(normalizeDirPath(path)));
+void redirectToPath(const String& path, UiLang lang) {
+  server.sendHeader(
+    "Location",
+    "/?path=" + urlEncode(normalizeDirPath(path)) + "&lang=" + langCode(lang)
+  );
   server.send(303);
 }
 
@@ -378,21 +684,21 @@ void readSHT40() {
     lastTemperature = temp.temperature;
     lastHumidity = humidity.relative_humidity;
   } else {
-    addLog("CHYBA: cteni SHT40 selhalo");
+    addLogEntry(LOG_SHT40_READ_FAILED);
   }
 }
 
 void initSHT40() {
   if (!sht4.begin(&Wire)) {
     sht40Found = false;
-    addLog("SHT40 nebyl nalezen");
+    addLogEntry(LOG_SHT40_NOT_FOUND);
     return;
   }
 
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
   sht4.setHeater(SHT4X_NO_HEATER);
   sht40Found = true;
-  addLog("SHT40 detekovan OK");
+  addLogEntry(LOG_SHT40_DETECTED);
   readSHT40();
 }
 
@@ -407,7 +713,7 @@ void readBMP280() {
   float p = bmp280.readPressure();
 
   if (isnan(t) || isnan(p) || p <= 0.0f) {
-    addLog("CHYBA: cteni BMP280 selhalo");
+    addLogEntry(LOG_BMP280_READ_FAILED);
     return;
   }
 
@@ -420,15 +726,15 @@ void initBMP280() {
 
   if (bmp280.begin(BMP280_ADDR_1)) {
     ok = true;
-    addLog("BMP280 detekovan na adrese 0x76");
+    addLogEntry(LOG_BMP280_DETECTED_76);
   } else if (bmp280.begin(BMP280_ADDR_2)) {
     ok = true;
-    addLog("BMP280 detekovan na adrese 0x77");
+    addLogEntry(LOG_BMP280_DETECTED_77);
   }
 
   if (!ok) {
     bmp280Found = false;
-    addLog("BMP280 nebyl nalezen");
+    addLogEntry(LOG_BMP280_NOT_FOUND);
     return;
   }
 
@@ -449,7 +755,7 @@ void initBMP280() {
 // =====================================================
 
 void initI2CDevices() {
-  addLog("Inicializace I2C...");
+  addLogEntry(LOG_I2C_INIT);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   delay(50);
 
@@ -471,12 +777,12 @@ void initSDCard() {
 
   if (!sdCardInserted) {
     sdOk = false;
-    addLog("SD karta neni vlozena");
+    addLogEntry(LOG_SD_NOT_INSERTED);
     bumpSdStateVersion();
     return;
   }
 
-  addLog("Inicializace SD karty...");
+  addLogEntry(LOG_SD_INIT);
 
   SD.end();
   sdSPI.end();
@@ -486,14 +792,14 @@ void initSDCard() {
 
   if (!SD.begin(SD_CS_PIN, sdSPI)) {
     sdOk = false;
-    addLog("CHYBA: SD.begin() selhalo");
+    addLogEntry(LOG_SD_BEGIN_FAILED);
     bumpSdStateVersion();
     return;
   }
 
   if (SD.cardType() == CARD_NONE) {
     sdOk = false;
-    addLog("CHYBA: SD karta nenalezena");
+    addLogEntry(LOG_SD_NOT_FOUND);
     SD.end();
     sdSPI.end();
     bumpSdStateVersion();
@@ -501,8 +807,8 @@ void initSDCard() {
   }
 
   sdOk = true;
-  addLog("SD karta OK");
-  addLog("Velikost karty: " + String((uint32_t)(SD.cardSize() / (1024ULL * 1024ULL))) + " MB");
+  addLogEntry(LOG_SD_OK);
+  addLogEntry(LOG_SD_SIZE_MB, String((uint32_t)(SD.cardSize() / (1024ULL * 1024ULL))));
   bumpSdStateVersion();
 }
 
@@ -533,18 +839,24 @@ void handleSdHotplug() {
     SD.end();
     sdSPI.end();
     sdOk = false;
-    addLog("SD karta byla vyjmuta");
+    addLogEntry(LOG_SD_REMOVED);
     bumpSdStateVersion();
     return;
   }
 
-  addLog("SD karta byla vlozena");
+  addLogEntry(LOG_SD_INSERTED);
   delay(50);
   initSDCard();
 }
 
-String buildFileTable(const String& currentPath) {
-  if (!sdOk) return F("<p>SD karta neni dostupna.</p>");
+// =====================================================
+// SD PANEL
+// =====================================================
+
+String buildFileTable(const String& currentPath, UiLang lang) {
+  if (!sdOk) {
+    return String(F("<p>")) + tr(lang, "SD karta není dostupná.", "SD card is not available.") + F("</p>");
+  }
 
   String path = normalizeDirPath(currentPath);
   if (!isSafePath(path)) path = "/";
@@ -556,34 +868,61 @@ String buildFileTable(const String& currentPath) {
     if (dir) dir.close();
 
     String html;
-    html += F("<p><b>Chyba:</b> Nelze otevřít adresář.</p>");
-    html += F("<p><b>Požadovaná cesta:</b> ");
+    html += F("<p><b>");
+    html += tr(lang, "Chyba:", "Error:");
+    html += F("</b> ");
+    html += tr(lang, "Nelze otevřít adresář.", "Cannot open directory.");
+    html += F("</p>");
+
+    html += F("<p><b>");
+    html += tr(lang, "Požadovaná cesta:", "Requested path:");
+    html += F("</b> ");
     html += htmlEscape(path);
     html += F("</p>");
 
     html += F("<p><a href='/?path=");
     html += urlEncode(fallbackPath);
+    html += F("&lang=");
+    html += langCode(lang);
     html += F("'><span style='font-size:24px;'>↩️</span></a></p>");
 
     return html;
   }
 
   String html;
-  html += F("<p><b>Aktuální adresář:</b> ");
+  html += F("<p><b>");
+  html += tr(lang, "Aktuální adresář:", "Current directory:");
+  html += F("</b> ");
   html += htmlEscape(path);
   html += F("</p>");
 
-  html += F("<form method='GET' action='/'><label>Přejít do adresáře</label><input type='text' name='path' value='");
+  html += F("<form method='GET' action='/'><label>");
+  html += tr(lang, "Přejít do adresáře", "Go to directory");
+  html += F("</label><input type='text' name='path' value='");
   html += htmlEscape(path);
-  html += F("'><button type='submit'>Otevřít</button></form>");
+  html += F("'><input type='hidden' name='lang' value='");
+  html += langCode(lang);
+  html += F("'><button type='submit'>");
+  html += tr(lang, "Otevřít", "Open");
+  html += F("</button></form>");
 
   if (path != "/") {
     html += F("<p><a href='/?path=");
     html += urlEncode(parentPath(path));
+    html += F("&lang=");
+    html += langCode(lang);
     html += F("'><span style='font-size:24px;'>↩️</span></a></p>");
   }
 
-  html += F("<table><tr><th>Typ</th><th>Název</th><th>Velikost</th><th>Akce</th></tr>");
+  html += F("<table><tr><th>");
+  html += tr(lang, "Typ", "Type");
+  html += F("</th><th>");
+  html += tr(lang, "Název", "Name");
+  html += F("</th><th>");
+  html += tr(lang, "Velikost", "Size");
+  html += F("</th><th>");
+  html += tr(lang, "Akce", "Actions");
+  html += F("</th></tr>");
 
   File file = dir.openNextFile();
   bool any = false;
@@ -622,6 +961,8 @@ String buildFileTable(const String& currentPath) {
     if (isDir) {
       html += F("<a href='/?path=");
       html += entryUrl;
+      html += F("&lang=");
+      html += langCode(lang);
       html += F("'>");
       html += entryEsc;
       html += F("</a>");
@@ -636,6 +977,8 @@ String buildFileTable(const String& currentPath) {
     if (!isDir) {
       html += F("<a href='/download?name=");
       html += entryUrl;
+      html += F("&lang=");
+      html += langCode(lang);
       html += F("'>⬇️</a> | ");
     }
 
@@ -643,7 +986,11 @@ String buildFileTable(const String& currentPath) {
     html += entryUrl;
     html += F("&path=");
     html += currentUrl;
-    html += F("' onclick=\"return confirm('Opravdu smazat?')\">🗑️</a>");
+    html += F("&lang=");
+    html += langCode(lang);
+    html += F("' onclick=\"return confirm('");
+    html += tr(lang, "Opravdu smazat?", "Really delete?");
+    html += F("')\">🗑️</a>");
 
     html += F("</td></tr>");
 
@@ -652,7 +999,9 @@ String buildFileTable(const String& currentPath) {
   }
 
   if (!any) {
-    html += F("<tr><td colspan='4'>Adresář je prázdný</td></tr>");
+    html += F("<tr><td colspan='4'>");
+    html += tr(lang, "Adresář je prázdný", "Directory is empty");
+    html += F("</td></tr>");
   }
 
   html += F("</table>");
@@ -660,40 +1009,60 @@ String buildFileTable(const String& currentPath) {
   return html;
 }
 
-String buildSdPanel(const String& currentPath) {
+String buildSdPanel(const String& currentPath, UiLang lang) {
   String html;
   html.reserve(18000);
 
-  html += F("<h2>Správa souborů na SD</h2>");
+  html += F("<h2>");
+  html += tr(lang, "Správa souborů na SD", "SD file manager");
+  html += F("</h2>");
 
   if (sdOk) {
     html += F("<div class='tools'>");
 
-    html += F("<div class='toolbox'><h3>Nahrávání souborů</h3>"
+    html += F("<div class='toolbox'><h3>");
+    html += tr(lang, "Nahrávání souborů", "File upload");
+    html += F("</h3>"
               "<form method='POST' action='/upload' enctype='multipart/form-data'>"
               "<input type='hidden' name='path' value='");
     html += htmlEscape(currentPath);
     html += F("'>"
+              "<input type='hidden' name='lang' value='");
+    html += langCode(lang);
+    html += F("'>"
               "<input type='file' name='data'>"
-              "<button type='submit'>Nahrát</button>"
+              "<button type='submit'>");
+    html += tr(lang, "Nahrát", "Upload");
+    html += F("</button>"
               "</form></div>");
 
-    html += F("<div class='toolbox'><h3>Vytvořit adresář</h3>"
+    html += F("<div class='toolbox'><h3>");
+    html += tr(lang, "Vytvořit adresář", "Create directory");
+    html += F("</h3>"
               "<form method='GET' action='/mkdir'>"
               "<input type='hidden' name='path' value='");
     html += htmlEscape(currentPath);
     html += F("'>"
-              "<label>Název nové složky</label>"
+              "<input type='hidden' name='lang' value='");
+    html += langCode(lang);
+    html += F("'>"
+              "<label>");
+    html += tr(lang, "Název nové složky", "New folder name");
+    html += F("</label>"
               "<input type='text' name='name'>"
-              "<button type='submit'>Vytvořit</button>"
+              "<button type='submit'>");
+    html += tr(lang, "Vytvořit", "Create");
+    html += F("</button>"
               "</form></div>");
 
     html += F("</div>");
   } else {
-    html += F("<p>SD karta není dostupná.</p>");
+    html += F("<p>");
+    html += tr(lang, "SD karta není dostupná.", "SD card is not available.");
+    html += F("</p>");
   }
 
-  html += buildFileTable(currentPath);
+  html += buildFileTable(currentPath, lang);
   return html;
 }
 
@@ -713,11 +1082,40 @@ String buildSdStateJson() {
 // RS485
 // =====================================================
 
+bool isSupportedRs485Baud(uint32_t baud) {
+  switch (baud) {
+    case 1200:
+    case 2400:
+    case 4800:
+    case 9600:
+    case 19200:
+    case 38400:
+    case 57600:
+    case 115200:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void applyRS485Baudrate(uint32_t baud) {
+  if (!isSupportedRs485Baud(baud)) return;
+  if (rs485Baudrate == baud) return;
+
+  Serial2.flush();
+  Serial2.end();
+  rs485Baudrate = baud;
+  Serial2.begin(rs485Baudrate, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
+  delay(50);
+
+  addLogText("RS485 baud changed to " + String(rs485Baudrate));
+}
+
 void initRS485() {
-  Serial2.begin(RS485_BAUDRATE, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
+  Serial2.begin(rs485Baudrate, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
   delay(100);
-  addLog("RS485 inicializovano");
-  addLog("TX=" + String(RS485_TX_PIN) + ", RX=" + String(RS485_RX_PIN) + ", baud=" + String(RS485_BAUDRATE));
+  addLogEntry(LOG_RS485_INIT);
+  addLogEntry(LOG_RS485_PINS, String(RS485_TX_PIN), String(RS485_RX_PIN), String(rs485Baudrate));
 }
 
 // =====================================================
@@ -725,40 +1123,40 @@ void initRS485() {
 // =====================================================
 
 void printETHStatus() {
-  addLog("Ethernet stav:");
-  addLog("  Link: " + String(ethConnected ? "UP" : "DOWN"));
-  addLog("  IP: " + String(ethGotIP ? ETH.localIP().toString() : "neni"));
+  addLogEntry(LOG_ETH_STATUS_TITLE);
+  addLogEntry(LOG_ETH_STATUS_LINK, ethConnected ? "UP" : "DOWN");
+  addLogEntry(LOG_ETH_STATUS_IP, ethGotIP ? ETH.localIP().toString() : trCurrent("není", "none"));
   if (ethConnected || ethGotIP) {
-    addLog("  MAC: " + ETH.macAddress());
+    addLogEntry(LOG_ETH_STATUS_MAC, ETH.macAddress());
   }
 }
 
 void WiFiEvent(WiFiEvent_t event) {
   switch (event) {
     case ARDUINO_EVENT_ETH_START:
-      addLog("[ETH] START");
+      addLogEntry(LOG_ETH_START);
       ETH.setHostname("esp32-control");
       break;
 
     case ARDUINO_EVENT_ETH_CONNECTED:
-      addLog("[ETH] CONNECTED");
+      addLogEntry(LOG_ETH_CONNECTED);
       ethConnected = true;
       break;
 
     case ARDUINO_EVENT_ETH_GOT_IP:
-      addLog("[ETH] GOT IP: " + ETH.localIP().toString());
+      addLogEntry(LOG_ETH_GOT_IP, ETH.localIP().toString());
       ethGotIP = true;
       printETHStatus();
       break;
 
     case ARDUINO_EVENT_ETH_DISCONNECTED:
-      addLog("[ETH] DISCONNECTED");
+      addLogEntry(LOG_ETH_DISCONNECTED);
       ethConnected = false;
       ethGotIP = false;
       break;
 
     case ARDUINO_EVENT_ETH_STOP:
-      addLog("[ETH] STOP");
+      addLogEntry(LOG_ETH_STOP);
       ethConnected = false;
       ethGotIP = false;
       break;
@@ -769,7 +1167,7 @@ void WiFiEvent(WiFiEvent_t event) {
 }
 
 void initEthernet() {
-  addLog("Inicializace Ethernetu...");
+  addLogEntry(LOG_ETH_INIT);
   WiFi.onEvent(WiFiEvent);
 
   bool ok = ETH.begin(
@@ -782,81 +1180,122 @@ void initEthernet() {
   );
 
   if (!ok) {
-    addLog("CHYBA: ETH.begin() selhalo");
+    addLogEntry(LOG_ETH_BEGIN_FAILED);
     return;
   }
 
   unsigned long start = millis();
   while (millis() - start < 15000) {
     if (ethGotIP) {
-      addLog("Ethernet OK");
+      addLogEntry(LOG_ETH_OK);
       return;
     }
     delay(100);
   }
 
-  addLog("Ethernet bez IP adresy");
+  addLogEntry(LOG_ETH_NO_IP);
 }
 
 // =====================================================
 // HTML
 // =====================================================
 
-String buildStatusPanel() {
-  String ip = ethGotIP ? ETH.localIP().toString() : "neni";
+String buildStatusPanel(UiLang lang) {
+  String ip = ethGotIP ? ETH.localIP().toString() : tr(lang, "není", "none");
   String mac = (ethConnected || ethGotIP) ? ETH.macAddress() : "-";
-  String temp = (sht40Found && !isnan(lastTemperature)) ? String(lastTemperature, 2) + " &deg;C" : "neni";
-  String hum = (sht40Found && !isnan(lastHumidity)) ? String(lastHumidity, 2) + " %RH" : "neni";
-  String bmpTemp = (bmp280Found && !isnan(lastBmpTemperature)) ? String(lastBmpTemperature, 2) + " &deg;C" : "neni";
-  String pressure = (bmp280Found && !isnan(lastPressure_hPa)) ? String(lastPressure_hPa, 2) + " hPa" : "neni";
+  String temp = (sht40Found && !isnan(lastTemperature)) ? String(lastTemperature, 2) + " &deg;C" : tr(lang, "není", "none");
+  String hum = (sht40Found && !isnan(lastHumidity)) ? String(lastHumidity, 2) + " %RH" : tr(lang, "není", "none");
+  String bmpTemp = (bmp280Found && !isnan(lastBmpTemperature)) ? String(lastBmpTemperature, 2) + " &deg;C" : tr(lang, "není", "none");
+  String pressure = (bmp280Found && !isnan(lastPressure_hPa)) ? String(lastPressure_hPa, 2) + " hPa" : tr(lang, "není", "none");
 
   String html;
-  html.reserve(2600);
+  html.reserve(3000);
 
-  html += F("<h2>Stav systému</h2>");
-  html += F("<p><b>Ethernet link:</b> ");
+  html += F("<h2>");
+  html += tr(lang, "Stav systému", "System status");
+  html += F("</h2>");
+
+  html += F("<p><b>");
+  html += tr(lang, "Ethernet link:", "Ethernet link:");
+  html += F("</b> ");
   html += (ethConnected ? "<span class='ok'>UP</span>" : "<span class='bad'>DOWN</span>");
+
   html += F("</p><p><b>IP:</b> ");
   html += ip;
+
   html += F("</p><p><b>MAC:</b> ");
   html += mac;
-  html += F("</p><p><b>SD karta:</b> ");
-  html += (sdOk ? "<span class='ok'>OK</span>" : "<span class='bad'>CHYBA</span>");
-  html += F("</p><p><b>SD detect:</b> ");
-  html += (sdCardInserted ? "<span class='ok'>vložena</span>" : "<span class='bad'>není vložena</span>");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "SD karta:", "SD card:");
+  html += F("</b> ");
+  html += (sdOk ? "<span class='ok'>OK</span>" : "<span class='bad'>" + tr(lang, "CHYBA", "ERROR") + "</span>");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "SD detect:", "SD detect:");
+  html += F("</b> ");
+  html += (sdCardInserted ? "<span class='ok'>" + tr(lang, "vložena", "inserted") + "</span>"
+                          : "<span class='bad'>" + tr(lang, "není vložena", "not inserted") + "</span>");
+
   html += F("</p><p><b>SHT40:</b> ");
-  html += (sht40Found ? "<span class='ok'>OK</span>" : "<span class='bad'>není nalezen</span>");
-  html += F("</p><p><b>Teplota SHT40:</b> ");
+  html += (sht40Found ? "<span class='ok'>OK</span>" : "<span class='bad'>" + tr(lang, "není nalezen", "not found") + "</span>");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "SHT40 teplota:", "SHT40 temperature:");
+  html += F("</b> ");
   html += temp;
-  html += F("</p><p><b>Vlhkost:</b> ");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "Vlhkost:", "Humidity:");
+  html += F("</b> ");
   html += hum;
+
   html += F("</p><p><b>BMP280:</b> ");
-  html += (bmp280Found ? "<span class='ok'>OK</span>" : "<span class='bad'>není nalezen</span>");
-  html += F("</p><p><b>Teplota BMP280:</b> ");
+  html += (bmp280Found ? "<span class='ok'>OK</span>" : "<span class='bad'>" + tr(lang, "není nalezen", "not found") + "</span>");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "BMP280 teplota:", "BMP280 temperature:");
+  html += F("</b> ");
   html += bmpTemp;
-  html += F("</p><p><b>Tlak:</b> ");
+
+  html += F("</p><p><b>");
+  html += tr(lang, "Tlak:", "Pressure:");
+  html += F("</b> ");
   html += pressure;
+
   html += F("</p><p><b>FreeHeap:</b> ");
   html += String(ESP.getFreeHeap());
   html += F(" B (");
   html += String(getFreeHeapPercent(), 1);
-  html += F(" %)</p><p><b>Heap celkem:</b> ");
+  html += F(" %)</p><p><b>");
+  html += tr(lang, "Heap celkem:", "Total heap:");
+  html += F("</b> ");
   html += String(totalHeapBytes);
   html += F(" B</p>");
-  html += F("<p><a href='/'>Obnovit celou stránku</a></p>");
+
+  html += F("<p><a href='/?lang=");
+  html += langCode(lang);
+  html += F("'>");
+  html += tr(lang, "Obnovit celou stránku", "Reload full page");
+  html += F("</a></p>");
 
   return html;
 }
 
-String buildNeoPixelPanel() {
+String buildNeoPixelPanel(UiLang lang) {
   String html;
-  html.reserve(7000);
+  html.reserve(7500);
 
   html += F("<h2>NeoPixel</h2>");
 
   html += F("<form action='/led' method='get' id='ledForm'>");
+  html += F("<input type='hidden' name='lang' value='");
+  html += langCode(lang);
+  html += F("'>");
 
-  html += F("<label>Vyber barvu</label>");
+  html += F("<label>");
+  html += tr(lang, "Vyberte barvu", "Select color");
+  html += F("</label>");
   html += F("<div style='background:#f8fafc;border:1px solid #dbe3ee;border-radius:12px;padding:10px;margin-bottom:12px;'>");
 
   html += F("<div id='ledColorArea' style='position:relative;width:100%;height:190px;border-radius:10px;overflow:hidden;cursor:crosshair;border:1px solid #cfd8e3;background:red;'>");
@@ -865,7 +1304,9 @@ String buildNeoPixelPanel() {
   html += F("<div id='ledColorCursor' style='position:absolute;width:14px;height:14px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;transform:translate(-7px,-7px);left:100%;top:0;'></div>");
   html += F("</div>");
 
-  html += F("<label style='margin-top:10px;'>Odstín</label>");
+  html += F("<label style='margin-top:10px;'>");
+  html += tr(lang, "Odstín", "Hue");
+  html += F("</label>");
   html += F("<div id='ledHueWrap' style='position:relative;height:18px;border-radius:999px;overflow:hidden;border:1px solid #cfd8e3;cursor:pointer;background:linear-gradient(to right,#ff0000,#ffff00,#00ff00,#00ffff,#0000ff,#ff00ff,#ff0000);'>");
   html += F("<div id='ledHueCursor' style='position:absolute;top:0;width:14px;height:18px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.5);background:transparent;pointer-events:none;transform:translateX(-7px);left:0;'></div>");
   html += F("</div>");
@@ -889,9 +1330,18 @@ String buildNeoPixelPanel() {
 
   html += F("</div>");
 
+  html += F("<div style='flex:1;min-width:0;'><label>");
+  html += tr(lang, "Jas", "Brightness");
+  html += F("</label>");
+  html += F("<input type='range' name='brightness' min='0' max='255' value='");
+  html += String(ledBrightness);
+  html += F("'></div>");
+
   html += F("<div style='display:flex;gap:10px;align-items:center;margin-top:12px;'><div id='ledPreview' style='width:32px;height:32px;border-radius:8px;border:1px solid #ccc;background:");
   html += colorToHex(ledR, ledG, ledB);
-  html += F("'></div><div><b>Aktuální barva:</b> R=<span id='ledTextR'>");
+  html += F("'></div><div><b>");
+  html += tr(lang, "Aktuální barva:", "Current color:");
+  html += F("</b> R=<span id='ledTextR'>");
   html += String(ledR);
   html += F("</span> G=<span id='ledTextG'>");
   html += String(ledG);
@@ -899,32 +1349,70 @@ String buildNeoPixelPanel() {
   html += String(ledB);
   html += F("</span></div></div>");
 
-  html += F("<button type='submit'>Nastavit LED</button>");
+  html += F("<button type='submit'>");
+  html += tr(lang, "Nastavit LED", "Set LED");
+  html += F("</button>");
   html += F("</form>");
 
   html += F("<form action='/led' method='get'>"
+            "<input type='hidden' name='lang' value='");
+  html += langCode(lang);
+  html += F("'>"
             "<input type='hidden' name='r' value='0'>"
             "<input type='hidden' name='g' value='0'>"
             "<input type='hidden' name='b' value='0'>"
-            "<button type='submit'>Vypnout LED</button>"
+            "<button type='submit'>");
+  html += tr(lang, "Vypnout LED", "Turn off LED");
+  html += F("</button>"
             "</form>");
 
   return html;
 }
 
-String buildRS485Panel() {
+String buildRS485Panel(UiLang lang) {
   String html;
-  html.reserve(2600);
+  html.reserve(3600);
 
   html += F("<h2>RS485</h2>"
             "<form action='/rs485' method='post'>"
-            "<label>Text k odeslání</label>"
-            "<textarea name='msg' rows='5'></textarea>"
-            "<button type='submit'>Poslat přes RS485</button>"
+            "<input type='hidden' name='lang' value='");
+  html += langCode(lang);
+  html += F("'>"
+            "<label>");
+  html += tr(lang, "Text k odeslání", "Text to send");
+  html += F("</label>"
+            "<textarea name='msg' rows='5'></textarea>");
+
+  html += F("<div style='display:flex;gap:10px;align-items:end;flex-wrap:wrap;'>");
+
+  html += F("<div style='min-width:180px;'><label>");
+  html += tr(lang, "Přenosová rychlost", "Baud rate");
+  html += F("</label><select name='baud'>");
+
+  const uint32_t baudList[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200};
+  for (size_t i = 0; i < sizeof(baudList) / sizeof(baudList[0]); i++) {
+    html += F("<option value='");
+    html += String(baudList[i]);
+    html += F("'");
+    if (baudList[i] == rs485Baudrate) html += F(" selected");
+    html += F(">");
+    html += String(baudList[i]);
+    html += F("</option>");
+  }
+
+  html += F("</select></div>");
+
+  html += F("<div><button type='submit'>");
+  html += tr(lang, "Poslat přes RS485", "Send via RS485");
+  html += F("</button></div></div>"
             "</form>"
-            "<p><b>Poslední odesláno:</b></p><div class='mono' id='rs485LastSent'>");
+            "<p><b>");
+  html += tr(lang, "Poslední odesláno:", "Last sent:");
+  html += F("</b></p><div class='mono' id='rs485LastSent'>");
   html += htmlEscape(rs485LastSent);
-  html += F("</div><p><b>Poslední přijato:</b></p><div class='mono' id='rs485LastReceived'>");
+  html += F("</div><p><b>");
+  html += tr(lang, "Poslední přijato:", "Last received:");
+  html += F("</b></p><div class='mono' id='rs485LastReceived'>");
   html += htmlEscape(rs485LastReceived);
   html += F("</div>");
 
@@ -941,20 +1429,26 @@ String buildRS485RxJson() {
   return json;
 }
 
-String buildLogPanel() {
+String buildLogPanel(UiLang lang) {
   String html;
-  html.reserve(8500);
+  html.reserve(12000);
 
-  html += F("<h2>Log</h2><div class='mono' id='logContent'>");
-  html += htmlEscape(eventLog);
+  html += F("<h2>");
+  html += tr(lang, "Log", "Log");
+  html += F("</h2><div class='mono' id='logContent'>");
+
+  for (size_t i = 0; i < eventLog.size(); i++) {
+    html += htmlEscape(renderLogEntry(eventLog[i], lang));
+    if (i + 1 < eventLog.size()) html += '\n';
+  }
+
   html += F("</div>");
-
   return html;
 }
 
-String buildMainPage(const String& currentPath) {
+String buildMainPage(const String& currentPath, UiLang lang) {
   String html;
-  html.reserve(50000);
+  html.reserve(52000);
 
   html += F(
     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -968,9 +1462,12 @@ String buildMainPage(const String& currentPath) {
     ".card-wide{grid-column:1 / -1;}"
     ".tools{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;margin-bottom:16px;}"
     ".toolbox{background:#f8fafc;border:1px solid #dbe3ee;border-radius:12px;padding:12px;}"
-    "h1,h2,h3{margin-top:0}"".page-title{display:flex;align-items:center;gap:18px;margin-bottom:22px;flex-wrap:wrap}"".page-title h1{margin:0}"".brand-logo{display:block;max-width:180px;width:100%;height:auto}"
+    "h1,h2,h3{margin-top:0}"
+    ".page-title{display:flex;align-items:center;gap:18px;flex-wrap:wrap}"
+    ".page-title h1{margin:0}"
+    ".brand-logo{display:block;max-width:180px;width:100%;height:auto}"
     "label{display:block;margin:8px 0 4px;font-weight:bold}"
-    "input[type=text],input[type=number],input[type=file],textarea{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}"
+    "input[type=text],input[type=number],input[type=file],textarea,select{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}"
     "button{padding:10px 14px;border:0;border-radius:10px;background:#1f6feb;color:#fff;cursor:pointer;margin-top:8px}"
     "button:hover{opacity:.92}"
     "table{width:100%;border-collapse:collapse}"
@@ -983,35 +1480,63 @@ String buildMainPage(const String& currentPath) {
     "a:hover{text-decoration:underline}"
     "@media (max-width:900px){.tools{grid-template-columns:1fr;}.brand-logo{max-width:240px;}}"
     "</style></head><body><div class='wrap'>"
-    "<div class='page-title'>""<img src='/logo.png' alt='LaskaKit logo' class='brand-logo'>""<h1>ESPLan v2.x Control Panel</h1>""</div>"
   );
+
+  html += F("<div style='display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px;'>");
+
+  html += F("<div class='page-title'>"
+            "<img src='/logo.png' alt='LaskaKit logo' class='brand-logo'>"
+            "<h1>ESPLan v2.x Control Panel</h1>"
+            "</div>");
+
+  html += F("<form method='GET' action='/' style='display:flex;gap:8px;align-items:center;margin:0;'>");
+  html += F("<input type='hidden' name='path' value='");
+  html += htmlEscape(currentPath);
+  html += F("'>");
+  html += F("<label style='margin:0;font-weight:bold;'>");
+  html += tr(lang, "Jazyk", "Language");
+  html += F("</label>");
+  html += F("<select name='lang' onchange='this.form.submit()' style='padding:8px;border-radius:8px;border:1px solid #ccc;'>");
+  html += F("<option value='cz'");
+  if (lang == LANG_CZ) html += F(" selected");
+  html += F(">CZ</option>");
+  html += F("<option value='en'");
+  if (lang == LANG_EN) html += F(" selected");
+  html += F(">ENG</option>");
+  html += F("</select></form>");
+
+  html += F("</div>");
 
   html += F("<div class='grid'>");
 
   html += F("<div class='card' id='statusPanel'>");
-  html += buildStatusPanel();
+  html += buildStatusPanel(lang);
   html += F("</div>");
 
   html += F("<div class='card' id='neoPixelPanel'>");
-  html += buildNeoPixelPanel();
+  html += buildNeoPixelPanel(lang);
   html += F("</div>");
 
   html += F("<div class='card' id='rs485Panel'>");
-  html += buildRS485Panel();
+  html += buildRS485Panel(lang);
   html += F("</div>");
 
   html += F("<div class='card card-wide' id='sdPanel'>");
-  html += buildSdPanel(currentPath);
+  html += buildSdPanel(currentPath, lang);
   html += F("</div>");
 
   html += F("<div class='card' id='logPanel'>");
-  html += buildLogPanel();
+  html += buildLogPanel(lang);
   html += F("</div>");
 
   html += F("</div>");
+
+  html += F("<script>");
+  html += F("const currentLang='");
+  html += langCode(lang);
+  html += F("';");
 
   html += F(
-    "<script>"
     "let lastSdVersion=0;"
 
     "function scrollLogToBottom(){"
@@ -1199,7 +1724,7 @@ String buildMainPage(const String& currentPath) {
 
     "async function pollSdState(){"
       "try{"
-        "const r=await fetch('/sdstate',{cache:'no-store'});"
+        "const r=await fetch('/sdstate?lang='+currentLang,{cache:'no-store'});"
         "if(!r.ok)return;"
         "const s=await r.json();"
         "if(lastSdVersion===0){"
@@ -1209,8 +1734,8 @@ String buildMainPage(const String& currentPath) {
         "if(s.version!==lastSdVersion){"
           "lastSdVersion=s.version;"
           "const p=new URLSearchParams(window.location.search).get('path')||'/';"
-          "refreshPanel('/sdpanel?path='+encodeURIComponent(p),'sdPanel',null);"
-          "refreshPanel('/status','statusPanel',null);"
+          "refreshPanel('/sdpanel?path='+encodeURIComponent(p)+'&lang='+currentLang,'sdPanel',null);"
+          "refreshPanel('/status?lang='+currentLang,'statusPanel',null);"
         "}"
       "}catch(e){}"
     "}"
@@ -1219,7 +1744,7 @@ String buildMainPage(const String& currentPath) {
 
     "async function pollRs485Rx(){"
       "try{"
-        "const r=await fetch('/rs485rx',{cache:'no-store'});"
+        "const r=await fetch('/rs485rx?lang='+currentLang,{cache:'no-store'});"
         "if(!r.ok)return;"
         "const s=await r.json();"
         "const el=document.getElementById('rs485LastReceived');"
@@ -1235,8 +1760,8 @@ String buildMainPage(const String& currentPath) {
       "}catch(e){}"
     "}"
 
-    "setInterval(function(){refreshPanel('/status','statusPanel',null);},1000);"
-    "setInterval(function(){refreshPanel('/logpanel','logPanel',scrollLogToBottom);},2000);"
+    "setInterval(function(){refreshPanel('/status?lang='+currentLang,'statusPanel',null);},1000);"
+    "setInterval(function(){refreshPanel('/logpanel?lang='+currentLang,'logPanel',scrollLogToBottom);},2000);"
     "setInterval(pollSdState,1000);"
     "setInterval(pollRs485Rx,500);"
 
@@ -1246,9 +1771,9 @@ String buildMainPage(const String& currentPath) {
       "pollSdState();"
       "pollRs485Rx();"
     "});"
-    "</script>"
   );
 
+  html += F("</script>");
   html += F("</div></body></html>");
   return html;
 }
@@ -1258,53 +1783,79 @@ String buildMainPage(const String& currentPath) {
 // =====================================================
 
 void handleRoot() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
   String path = normalizeDirPath(server.arg("path"));
   if (!isSafePath(path)) path = "/";
-  server.send(200, "text/html; charset=utf-8", buildMainPage(path));
+  server.send(200, "text/html; charset=utf-8", buildMainPage(path, lang));
 }
 
 void handleStatus() {
-  server.send(200, "text/html; charset=utf-8", buildStatusPanel());
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+  server.send(200, "text/html; charset=utf-8", buildStatusPanel(lang));
 }
 
 void handleRS485Panel() {
-  server.send(200, "text/html; charset=utf-8", buildRS485Panel());
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+  server.send(200, "text/html; charset=utf-8", buildRS485Panel(lang));
 }
 
 void handleRS485Rx() {
+  updateCurrentLangFromRequest();
   server.send(200, "application/json; charset=utf-8", buildRS485RxJson());
 }
 
 void handleLogPanel() {
-  server.send(200, "text/html; charset=utf-8", buildLogPanel());
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+  server.send(200, "text/html; charset=utf-8", buildLogPanel(lang));
 }
 
 void handleSdPanel() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
   String path = normalizeDirPath(server.arg("path"));
   if (!isSafePath(path)) path = "/";
-  server.send(200, "text/html; charset=utf-8", buildSdPanel(path));
+  server.send(200, "text/html; charset=utf-8", buildSdPanel(path, lang));
 }
 
 void handleSdState() {
+  updateCurrentLangFromRequest();
   server.send(200, "application/json; charset=utf-8", buildSdStateJson());
 }
 
 void handleLed() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+
   int r = constrain(server.arg("r").toInt(), 0, 255);
   int g = constrain(server.arg("g").toInt(), 0, 255);
   int b = constrain(server.arg("b").toInt(), 0, 255);
 
+  int brightness = constrain(server.arg("brightness").toInt(), 0, 255);
+  ledBrightness = brightness;
+
   setPixelColor(r, g, b);
-  addLog("LED nastavena: R=" + String(r) + " G=" + String(g) + " B=" + String(b));
-  redirectHome();
+  addLogEntry(LOG_LED_SET, String(r), String(g), String(b));
+  redirectHome(lang);
 }
 
 void handleRS485Send() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+
+  uint32_t requestedBaud = (uint32_t)server.arg("baud").toInt();
+  if (isSupportedRs485Baud(requestedBaud) && requestedBaud != rs485Baudrate) {
+    applyRS485Baudrate(requestedBaud);
+  }
+
   String msg = server.arg("msg");
   msg.replace("\r", "");
 
   if (msg.length() == 0) {
-    redirectHome();
+    redirectHome(lang);
     return;
   }
 
@@ -1312,37 +1863,39 @@ void handleRS485Send() {
   Serial2.flush();
 
   rs485LastSent = msg;
-  addLog("RS485 TX: " + msg);
-  redirectHome();
+  addLogEntry(LOG_RS485_TX, msg);
+  redirectHome(lang);
 }
 
 void handleDownload() {
+  updateCurrentLangFromRequest();
+
   if (!sdOk) {
-    server.send(500, "text/plain", "SD karta není dostupná");
+    server.send(500, "text/plain", trCurrent("SD karta není dostupná", "SD card is not available"));
     return;
   }
 
   String name = normalizePath(server.arg("name"));
 
   if (!isSafePath(name)) {
-    server.send(400, "text/plain", "Neplatná cesta");
+    server.send(400, "text/plain", trCurrent("Neplatná cesta", "Invalid path"));
     return;
   }
 
   if (!SD.exists(name)) {
-    server.send(404, "text/plain", "Soubor neexistuje");
+    server.send(404, "text/plain", trCurrent("Soubor neexistuje", "File does not exist"));
     return;
   }
 
   File file = SD.open(name, FILE_READ);
   if (!file) {
-    server.send(500, "text/plain", "Nelze otevřít soubor");
+    server.send(500, "text/plain", trCurrent("Nelze otevřít soubor", "Cannot open file"));
     return;
   }
 
   if (file.isDirectory()) {
     file.close();
-    server.send(400, "text/plain", "Adresář nelze stáhnout");
+    server.send(400, "text/plain", trCurrent("Adresář nelze stáhnout", "Directory cannot be downloaded"));
     return;
   }
 
@@ -1358,8 +1911,11 @@ void handleDownload() {
 }
 
 void handleDelete() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+
   if (!sdOk) {
-    server.send(500, "text/plain", "SD karta není dostupná");
+    server.send(500, "text/plain", trCurrent("SD karta není dostupná", "SD card is not available"));
     return;
   }
 
@@ -1367,18 +1923,18 @@ void handleDelete() {
   String currentPath = normalizeDirPath(server.arg("path"));
 
   if (!isSafePath(name) || !isSafePath(currentPath)) {
-    server.send(400, "text/plain", "Neplatná cesta");
+    server.send(400, "text/plain", trCurrent("Neplatná cesta", "Invalid path"));
     return;
   }
 
   if (!SD.exists(name)) {
-    server.send(404, "text/plain", "Soubor nebo adresář neexistuje");
+    server.send(404, "text/plain", trCurrent("Soubor nebo adresář neexistuje", "File or directory does not exist"));
     return;
   }
 
   File entry = SD.open(name);
   if (!entry) {
-    server.send(500, "text/plain", "Nelze otevřít položku");
+    server.send(500, "text/plain", trCurrent("Nelze otevřít položku", "Cannot open item"));
     return;
   }
 
@@ -1393,18 +1949,21 @@ void handleDelete() {
   }
 
   if (ok) {
-    addLog(String("SD delete OK: ") + name);
+    addLogEntry(LOG_SD_DELETE_OK, name);
   } else {
-    addLog(String("SD delete CHYBA: ") + name);
+    addLogEntry(LOG_SD_DELETE_ERROR, name);
   }
 
   bumpSdStateVersion();
-  redirectToPath(currentPath);
+  redirectToPath(currentPath, lang);
 }
 
 void handleMkdir() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
+
   if (!sdOk) {
-    server.send(500, "text/plain", "SD karta není dostupná");
+    server.send(500, "text/plain", trCurrent("SD karta není dostupná", "SD card is not available"));
     return;
   }
 
@@ -1415,7 +1974,7 @@ void handleMkdir() {
   if (!isSafePath(currentPath)) currentPath = "/";
 
   if (name.length() == 0) {
-    redirectToPath(currentPath);
+    redirectToPath(currentPath, lang);
     return;
   }
 
@@ -1424,34 +1983,36 @@ void handleMkdir() {
   while (name.endsWith("/")) name.remove(name.length() - 1);
 
   if (name.length() == 0 || name.indexOf("..") >= 0 || name.indexOf('/') >= 0) {
-    addLog("MKDIR: neplatný název adresáře");
-    redirectToPath(currentPath);
+    addLogEntry(LOG_MKDIR_INVALID);
+    redirectToPath(currentPath, lang);
     return;
   }
 
   String newDir = joinPath(currentPath, name);
 
   if (SD.exists(newDir)) {
-    addLog("MKDIR: adresář již existuje: " + newDir);
-    redirectToPath(currentPath);
+    addLogEntry(LOG_MKDIR_EXISTS, newDir);
+    redirectToPath(currentPath, lang);
     return;
   }
 
   if (SD.mkdir(newDir)) {
-    addLog("MKDIR OK: " + newDir);
+    addLogEntry(LOG_MKDIR_OK, newDir);
   } else {
-    addLog("MKDIR CHYBA: " + newDir);
+    addLogEntry(LOG_MKDIR_ERROR, newDir);
   }
 
   bumpSdStateVersion();
-  redirectToPath(currentPath);
+  redirectToPath(currentPath, lang);
 }
 
 void handleUploadFinished() {
+  updateCurrentLangFromRequest();
+  UiLang lang = currentUiLang;
   String path = normalizeDirPath(server.arg("path"));
   if (!isSafePath(path)) path = "/";
   bumpSdStateVersion();
-  redirectToPath(path);
+  redirectToPath(path, lang);
 }
 
 void handleFileUpload() {
@@ -1461,6 +2022,8 @@ void handleFileUpload() {
   static String uploadTargetPath = "/";
 
   if (upload.status == UPLOAD_FILE_START) {
+    updateCurrentLangFromRequest();
+
     uploadTargetPath = normalizeDirPath(server.arg("path"));
     if (!isSafePath(uploadTargetPath)) uploadTargetPath = "/";
 
@@ -1472,11 +2035,11 @@ void handleFileUpload() {
     String filename = joinPath(uploadTargetPath, cleanName);
 
     if (!isSafePath(filename)) {
-      addLog("Upload: neplatné jméno souboru");
+      addLogEntry(LOG_UPLOAD_INVALID_NAME);
       return;
     }
 
-    addLog("Upload start: " + filename);
+    addLogEntry(LOG_UPLOAD_START, filename);
 
     if (SD.exists(filename)) {
       SD.remove(filename);
@@ -1484,7 +2047,7 @@ void handleFileUpload() {
 
     uploadFile = SD.open(filename, FILE_WRITE);
     if (!uploadFile) {
-      addLog("Upload: nelze otevřít soubor pro zápis");
+      addLogEntry(LOG_UPLOAD_OPEN_WRITE_FAILED);
     }
   }
   else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -1496,17 +2059,16 @@ void handleFileUpload() {
   else if (upload.status == UPLOAD_FILE_END) {
     if (uploadFile) {
       uploadFile.close();
-      addLog("Upload konec: " + String(upload.totalSize) + " B");
+      addLogEntry(LOG_UPLOAD_FINISHED, String(upload.totalSize));
     }
   }
   else if (upload.status == UPLOAD_FILE_ABORTED) {
     if (uploadFile) {
       uploadFile.close();
     }
-    addLog("Upload přerušen");
+    addLogEntry(LOG_UPLOAD_ABORTED);
   }
 }
-
 
 void handleLogo() {
   server.sendHeader("Cache-Control", "public, max-age=86400");
@@ -1514,7 +2076,8 @@ void handleLogo() {
 }
 
 void handleNotFound() {
-  server.send(404, "text/plain", "404 Not Found");
+  updateCurrentLangFromRequest();
+  server.send(404, "text/plain", trCurrent("404 Nenalezeno", "404 Not Found"));
 }
 
 void setupWebServer() {
@@ -1535,7 +2098,7 @@ void setupWebServer() {
   server.onNotFound(handleNotFound);
 
   server.begin();
-  addLog("Web server spusten na portu 80");
+  addLogEntry(LOG_WEB_STARTED);
 }
 
 // =====================================================
@@ -1548,21 +2111,22 @@ void setup() {
   printResetReason();
   delay(500);
 
-  addLog("");
-  addLog("======================================");
-  addLog("START");
-  addLog("======================================");
+  addLogText("");
+  addLogText("======================================");
+  addLogEntry(LOG_START);
+  addLogText("======================================");
 
   pixel.begin();
   pixel.clear();
   pixel.show();
-  setPixelColor(0, 0, 10);
+  pixel.setBrightness(ledBrightness);
+  setPixelColor(0, 255, 0);
 
   totalHeapBytes = ESP.getHeapSize();
 
-  addLog("CPU: " + String(ESP.getCpuFreqMHz()) + " MHz");
-  addLog("Heap celkem: " + String(totalHeapBytes) + " B");
-  addLog("Heap free: " + String(ESP.getFreeHeap()) + " B (" + String(getFreeHeapPercent(), 1) + " %)");
+  addLogEntry(LOG_CPU_FREQ, String(ESP.getCpuFreqMHz()));
+  addLogEntry(LOG_HEAP_TOTAL, String(totalHeapBytes));
+  addLogEntry(LOG_HEAP_FREE, String(ESP.getFreeHeap()), String(getFreeHeapPercent(), 1));
 
   initI2CDevices();
 
@@ -1575,11 +2139,11 @@ void setup() {
   initEthernet();
   setupWebServer();
 
-  addLog("READY");
+  addLogEntry(LOG_READY);
   if (ethGotIP) {
-    addLog("Otevri v browseru: http://" + ETH.localIP().toString() + "/");
+    addLogEntry(LOG_OPEN_BROWSER, ETH.localIP().toString());
   } else {
-    addLog("Ethernet zatim nema IP adresu");
+    addLogEntry(LOG_ETH_NO_IP_YET);
   }
 }
 
@@ -1589,7 +2153,6 @@ void loop() {
   handleSdHotplug();
 
   bool rs485RxChanged = false;
-
   static String rs485LineBuffer = "";
 
   while (Serial2.available()) {
@@ -1608,7 +2171,7 @@ void loop() {
       String line = rs485LineBuffer;
       line.trim();
       if (line.length() > 0) {
-        addLog("RS485 RX: " + line);
+        addLogEntry(LOG_RS485_RX, line);
       }
       rs485LineBuffer = "";
     }
@@ -1616,10 +2179,6 @@ void loop() {
     if ((rs485LastReceived.length() & 0xFF) == 0) {
       yield();
     }
-  }
-
-  if (rs485RxChanged) {
-    rs485RxVersion++;
   }
 
   if (rs485RxChanged) {
@@ -1644,23 +2203,24 @@ void loop() {
     Serial.println();
     Serial.println(F("----- STATUS -----"));
     Serial.printf("ETH link: %s\n", ethConnected ? "UP" : "DOWN");
-    Serial.printf("ETH IP: %s\n", ethGotIP ? ETH.localIP().toString().c_str() : "neni");
-    Serial.printf("SD: %s\n", sdOk ? "OK" : "CHYBA");
-    Serial.printf("SD detect: %s\n", sdCardInserted ? "vlozena" : "neni");
-    Serial.printf("SD verze: %lu\n", (unsigned long)sdStateVersion);
-    Serial.printf("SHT40: %s\n", sht40Found ? "OK" : "neni");
+    Serial.printf("ETH IP: %s\n", ethGotIP ? ETH.localIP().toString().c_str() : "none");
+    Serial.printf("SD: %s\n", sdOk ? "OK" : "ERROR");
+    Serial.printf("SD detect: %s\n", sdCardInserted ? "inserted" : "not inserted");
+    Serial.printf("SD version: %lu\n", (unsigned long)sdStateVersion);
+    Serial.printf("SHT40: %s\n", sht40Found ? "OK" : "not found");
     if (sht40Found && !isnan(lastTemperature) && !isnan(lastHumidity)) {
       Serial.printf("SHT40 -> T=%.2f C, RH=%.2f %%\n", lastTemperature, lastHumidity);
     }
 
-    Serial.printf("BMP280: %s\n", bmp280Found ? "OK" : "neni");
+    Serial.printf("BMP280: %s\n", bmp280Found ? "OK" : "not found");
     if (bmp280Found && !isnan(lastBmpTemperature) && !isnan(lastPressure_hPa)) {
       Serial.printf("BMP280 -> T=%.2f C, P=%.2f hPa\n", lastBmpTemperature, lastPressure_hPa);
     }
 
+    Serial.printf("RS485 baud: %lu\n", (unsigned long)rs485Baudrate);
     Serial.printf("LED -> R=%u G=%u B=%u\n", ledR, ledG, ledB);
     Serial.printf("FreeHeap: %u B (%.1f %%)\n", ESP.getFreeHeap(), getFreeHeapPercent());
-    Serial.printf("Heap celkem: %u B\n", totalHeapBytes);
+    Serial.printf("Heap total: %u B\n", totalHeapBytes);
     Serial.println(F("------------------"));
   }
 
