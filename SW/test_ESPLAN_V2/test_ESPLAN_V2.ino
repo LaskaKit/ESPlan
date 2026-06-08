@@ -1,27 +1,21 @@
-/* Test for LaskaKit ESPlan V2 ESP32 LAN8720A RS485 PoE
- * ESP32 + LAN8720 + WebServer + SD + RS485 + SHT40 + BMP280 + NeoPixel
- *
- * Funkce:
- *  - web rozhrani pres Ethernet
- *  - stav ETH, SD, SHT40, BMP280, RS485
- *  - ovladani NeoPixel LED
- *  - odesilani textu pres RS485
- *  - prijem dat z RS485
- *  - prochazeni adresaru na SD
- *  - upload / stahnout / smazat souboru na SD
- *  - vytvareni a mazani adresaru na SD
- *  - automaticka reakce na vyndani / vlozeni SD karty
- *  - po vlozeni se SD karta ihned znovu nacte
- *  - SD panel se na webu obnovi jen pri zmene stavu SD karty
- *  - periodicky debug do seriove konzole
- *  - volba jazyka CZ / ENG
+/*
+  ESP32 + LAN8720 + WebServer + SD + RS485 + SHT40 + BMP280 + NeoPixel
 
- * Board:   kaKit ESPlan V2   https://www.laskakit.cz/laskakit-esplan-esp32-lan8720a-max485-poe/
- *
- * 
- * Email:podpora@laskakit.cz
- * Web:laskakit.cz
- */
+  Funkce:
+  - web rozhrani pres Ethernet
+  - stav ETH, SD, SHT40, BMP280, RS485
+  - ovladani NeoPixel LED
+  - odesilani textu pres RS485
+  - prijem dat z RS485
+  - prochazeni adresaru na SD
+  - upload / stahnout / smazat souboru na SD
+  - vytvareni a mazani adresaru na SD
+  - automaticka reakce na vyndani / vlozeni SD karty
+  - po vlozeni se SD karta ihned znovu nacte
+  - SD panel se na webu obnovi jen pri zmene stavu SD karty
+  - periodicky debug do seriove konzole
+  - volba jazyka CZ / ENG
+*/
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -2129,11 +2123,6 @@ void setup() {
   addLogEntry(LOG_HEAP_FREE, String(ESP.getFreeHeap()), String(getFreeHeapPercent(), 1));
 
   initI2CDevices();
-
-  lastSdDetectRaw = isSdCardPresent();
-  lastSdDetectStable = lastSdDetectRaw;
-  lastSdDetectChangeMs = millis();
-
   initSDCard();
   initRS485();
   initEthernet();
