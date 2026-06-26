@@ -2,7 +2,7 @@
 
 **Jiné jazyky: [English](README.md)**
 
-![ESPlan](img/ESPlan_top.jpg)
+![ESPlan](img/laskakit-esplan-esp32-lan8720a-max485-poe-1.jpg)
 
 **LaskaKit ESPlan** je průmyslová vývojová deska postavená na modulu **ESP32-WROOM-32E**. Kombinuje drátový **Ethernet (LAN8720A)**, izolovanou sběrnici **RS485**, **Wi-Fi + Bluetooth** a **tři nezávislé způsoby napájení** – včetně volitelného **PoE**. Deska je určena pro průmyslovou automatizaci, IoT brány, domácí automatizaci (Home Assistant, ESPHome) i vzdálené senzorové uzly, kde je potřeba spolehlivá kabelová konektivita bez závislosti na Wi-Fi.
 

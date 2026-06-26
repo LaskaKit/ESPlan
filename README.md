@@ -1,8 +1,8 @@
 # ESPlan v2.1
 
-**Read this in other languages: [Čeština](README.cs.md)**
+**Read this in other languages: [Čeština](README_CZ)**
 
-![ESPlan](img/ESPlan_top.jpg)
+![ESPlan](img/laskakit-esplan-esp32-lan8720a-max485-poe-1.jpg)
 
 **LaskaKit ESPlan** is an industrial-grade ESP32 development board built around the **ESP32-WROOM-32E** module. It combines wired **Ethernet (LAN8720A)**, an isolated **RS485** bus, **Wi-Fi + Bluetooth**, and **three independent ways to power the board** – including optional **PoE**. It is designed for industrial automation, IoT gateways, home automation (Home Assistant, ESPHome) and remote sensor nodes where reliable wired connectivity without dependence on Wi-Fi is required.
 
