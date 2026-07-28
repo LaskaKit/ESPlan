@@ -4,7 +4,7 @@
 
 ![ESPlan](img/laskakit-esplan-esp32-lan8720a-max485-poe-1.jpg)
 
-**LaskaKit ESPlan** is an industrial-grade ESP32 development board built around the **ESP32-WROOM-32E** module. It combines wired **Ethernet (LAN8720A)**, an isolated **RS485** bus, **Wi-Fi + Bluetooth**, and **three independent ways to power the board** – including optional **PoE**. It is designed for industrial automation, IoT gateways, home automation (Home Assistant, ESPHome) and remote sensor nodes where reliable wired connectivity without dependence on Wi-Fi is required.
+**LaskaKit ESPlan** is an industrial-grade ESP32 development board built around the **ESP32-WROOM-32E** module. It combines wired **Ethernet (LAN8720A)**, an **RS485** bus, **Wi-Fi + Bluetooth**, and **three independent ways to power the board** – including optional **PoE**. It is designed for industrial automation, IoT gateways, home automation (Home Assistant, ESPHome) and remote sensor nodes where reliable wired connectivity without dependence on Wi-Fi is required.
 
 Designed and manufactured in the Czech Republic 🇨🇿
 
@@ -32,9 +32,9 @@ See annotated diagrams in [`img/power/`](img/power) for each option.
 
 ## 🔌 RS485 – wiring & terminal voltage
 
-The RS485 terminal has **three pins: GND, A, B**.
+The RS485 terminal has **four pins: 12/24 V IN/OUT, GND, A, B**.
 
-- **A and B are NOT power pins** – they carry the differential *data* signal from the isolated **WS3081** transceiver. At idle the A−B difference is ~0 V; while transmitting, |A−B| is roughly **1.5–3 V** under load (per the RS485 standard the driver outputs ≥1.5 V differential, receivers detect ±200 mV, common-mode range −7 V to +12 V). **There is no usable supply voltage on A/B.**
+- **A and B are NOT power pins** – they carry the differential *data* signal from the **WS3081** transceiver. At idle the A−B difference is ~0 V; while transmitting, |A−B| is roughly **1.5–3 V** under load (per the RS485 standard the driver outputs ≥1.5 V differential, receivers detect ±200 mV, common-mode range −7 V to +12 V). **There is no usable supply voltage on A/B.**
 - **Powering a remote RS485 device:** the terminal block also brings out **12/24 V IN/OUT**, so the same voltage you use to power the ESPlan (12 or 24 V) can be looped out to power a field sensor over the same run. If your sensor needs a different voltage (e.g. 5 V), use a local regulator at the sensor.
 - **Bus wiring:** connect **A↔A, B↔B, GND↔GND**. At the end of a long run enable the on-board **120 Ω** termination with the **BUS_TERM** jumper – no external terminator needed.
 
@@ -43,11 +43,11 @@ The RS485 terminal has **three pins: GND, A, B**.
 ## 🌐 Connectivity & interfaces
 
 - **Ethernet** – LAN8720A PHY (Fast Ethernet 10/100 Mbps), HanRun RJ45 with integrated magnetics and status LEDs.
-- **RS485** – fully isolated WS3081 transceiver with TVS protection, screw terminal (GND, A, B), on-board 120 Ω termination via the `BUS_TERM` jumper.
+- **RS485** – WS3081 transceiver with TVS protection, screw terminal (12/24 V IN/OUT, GND, A, B), on-board 120 Ω termination via the `BUS_TERM` jumper.
 - **Wi-Fi + Bluetooth** – built into the ESP32-WROOM-32E (2.4 GHz Wi-Fi 802.11 b/g/n, Bluetooth 4.2 / BLE).
 - **microSD card** – slot over SPI with card-detect.
-- **I²C connector** – dedicated 4-pin connector (3.3 V, GND, SCL, SDA) with pull-ups for sensors, displays, etc.
-- **µSup connector** – SPI connector for the optional supercapacitor module (µSup) for short backup during power loss.
+- **I²C connector** – dedicated 4-pin connector (3.3V, GND, SCL, SDA) with pull-ups for sensors, displays, etc.
+- **SPI connector** – dedicated 6-pin connector (3.3V, GND, MOSI, MISO, SCK, CS).
 - **GPIO header** – all free ESP32 pins broken out on a populated header.
 
 ---
@@ -75,10 +75,15 @@ The RS485 terminal has **three pins: GND, A, B**.
 > ```cpp
 > ETH.begin(0, -1, 23, 18, ETH_PHY_LAN8720, ETH_CLOCK_GPIO17_OUT);
 > ```
-> On newer cores use the named-enum signature, e.g. `ETH.begin(ETH_PHY_LAN8720, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLOCK_GPIO17_OUT);`
+> On newer cores use the named-enum signature, e.g. 
+> ```cpp
+> ETH.begin(ETH_PHY_LAN8720, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLOCK_GPIO17_OUT);
+> ```
 >
-> **I²C init:** `Wire.begin(33, 32);`
-
+> **I²C init:**
+> ```cpp
+> Wire.begin(33, 32);
+> ```
 ---
 
 ## 📐 Specifications
@@ -87,7 +92,7 @@ The RS485 terminal has **three pins: GND, A, B**.
 | --- | --- |
 | **MCU** | ESP32-WROOM-32E (Xtensa LX6 dual-core 240 MHz, 4 MB Flash, Wi-Fi + BT) |
 | **Ethernet PHY** | LAN8720A-CP, Fast Ethernet 10/100 Mbps |
-| **RS485** | WS3081, half-duplex, isolated, TVS protection, optional 120 Ω termination |
+| **RS485** | WS3081, half-duplex, TVS protection, optional 120 Ω termination |
 | **Power – USB-C** | 5 V |
 | **Power – terminal** | 7–40 V DC (12 or 24 V recommended) |
 | **Power – PoE** | IEEE 802.3af via DP9900M module (12 V or 24 V variant, sold separately) |
