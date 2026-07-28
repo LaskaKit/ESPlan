@@ -4,7 +4,7 @@
 
 ![ESPlan](img/laskakit-esplan-esp32-lan8720a-max485-poe-1.jpg)
 
-**LaskaKit ESPlan** je průmyslová vývojová deska postavená na modulu **ESP32-WROOM-32E**. Kombinuje drátový **Ethernet (LAN8720A)**, izolovanou sběrnici **RS485**, **Wi-Fi + Bluetooth** a **tři nezávislé způsoby napájení** – včetně volitelného **PoE**. Deska je určena pro průmyslovou automatizaci, IoT brány, domácí automatizaci (Home Assistant, ESPHome) i vzdálené senzorové uzly, kde je potřeba spolehlivá kabelová konektivita bez závislosti na Wi-Fi.
+**LaskaKit ESPlan** je průmyslová vývojová deska postavená na modulu **ESP32-WROOM-32E**. Kombinuje drátový **Ethernet (LAN8720A)**, sběrnici **RS485**, **Wi-Fi + Bluetooth** a **tři nezávislé způsoby napájení** – včetně volitelného **PoE**. Deska je určena pro průmyslovou automatizaci, IoT brány, domácí automatizaci (Home Assistant, ESPHome) i vzdálené senzorové uzly, kde je potřeba spolehlivá kabelová konektivita bez závislosti na Wi-Fi.
 
 Navrženo a vyrobeno v ČR 🇨🇿
 
@@ -34,7 +34,7 @@ Anotované obrázky ke každé možnosti najdeš v [`img/power/`](img/power).
 
 Svorkovnice RS485 má **tři vývody: GND, A, B**.
 
-- **A a B nejsou napájecí piny** – nesou diferenciální *datový* signál z izolovaného transceiveru **WS3081**. V klidu je rozdíl A−B přibližně 0 V; při vysílání je |A−B| zhruba **1,5–3 V** pod zátěží (dle standardu RS485 vysílač generuje ≥1,5 V diferenciálně, přijímač detekuje ±200 mV, common-mode rozsah −7 V až +12 V). **Žádné použitelné napájení na A/B není.**
+- **A a B nejsou napájecí piny** – nesou diferenciální *datový* signál z transceiveru **WS3081**. V klidu je rozdíl A−B přibližně 0 V; při vysílání je |A−B| zhruba **1,5–3 V** pod zátěží (dle standardu RS485 vysílač generuje ≥1,5 V diferenciálně, přijímač detekuje ±200 mV, common-mode rozsah −7 V až +12 V). **Žádné použitelné napájení na A/B není.**
 - **Napájení připojeného RS485 zařízení:** na svorkovnici je navíc vyvedeno **12/24 V IN/OUT**, takže stejné napětí, kterým napájíš ESPlan (12 nebo 24 V), můžeš vyvést ven a napájet jím vzdálené čidlo po stejném vedení. Pokud čidlo potřebuje jiné napětí (např. 5 V), použij u čidla vlastní měnič.
 - **Zapojení sběrnice:** propoj **A↔A, B↔B, GND↔GND**. Na konci dlouhého vedení zapni zakončovací odpor **120 Ω** jumperem **BUS_TERM** – externí terminátor není potřeba.
 
@@ -43,7 +43,7 @@ Svorkovnice RS485 má **tři vývody: GND, A, B**.
 ## 🌐 Konektivita a rozhraní
 
 - **Ethernet** – PHY LAN8720A (Fast Ethernet 10/100 Mbps), konektor RJ45 HanRun s integrovanými transformátory a stavovými LED.
-- **RS485** – plně izolovaný transceiver WS3081 s TVS ochranou, šroubovací svorkovnice (GND, A, B), zakončení 120 Ω přes jumper `BUS_TERM`.
+- **RS485** – transceiver WS3081 s TVS ochranou, šroubovací svorkovnice (GND, A, B), zakončení 120 Ω přes jumper `BUS_TERM`.
 - **Wi-Fi + Bluetooth** – vestavěné v ESP32-WROOM-32E (2,4 GHz Wi-Fi 802.11 b/g/n, Bluetooth 4.2 / BLE).
 - **microSD karta** – slot přes SPI s detekcí karty.
 - **I²C konektor** – dedikovaný 4pinový konektor (3,3 V, GND, SCL, SDA) s pull-up rezistory pro senzory, displeje apod.
@@ -87,7 +87,7 @@ Svorkovnice RS485 má **tři vývody: GND, A, B**.
 | --- | --- |
 | **MCU** | ESP32-WROOM-32E (Xtensa LX6 dual-core 240 MHz, 4 MB Flash, Wi-Fi + BT) |
 | **Ethernet PHY** | LAN8720A-CP, Fast Ethernet 10/100 Mbps |
-| **RS485** | WS3081, half-duplex, izolovaný, TVS ochrana, volitelné zakončení 120 Ω |
+| **RS485** | WS3081, half-duplex, TVS ochrana, volitelné zakončení 120 Ω |
 | **Napájení – USB-C** | 5 V |
 | **Napájení – svorkovnice** | 7–40 V DC (doporučeno 12 nebo 24 V) |
 | **Napájení – PoE** | IEEE 802.3af přes modul DP9900M (varianta 12 V nebo 24 V, kupuje se zvlášť) |
